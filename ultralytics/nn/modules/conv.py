@@ -537,117 +537,40 @@ class RepConv(nn.Module):
         if hasattr(self, "id_tensor"):
             self.__delattr__("id_tensor")
 
-
 class ChannelAttention(nn.Module):
-    """
-    Channel-attention module for feature recalibration.
-
-    Applies attention weights to channels based on global average pooling.
-
-    Attributes:
-        pool (nn.AdaptiveAvgPool2d): Global average pooling.
-        fc (nn.Conv2d): Fully connected layer implemented as 1x1 convolution.
-        act (nn.Sigmoid): Sigmoid activation for attention weights.
-
-    References:
-        https://github.com/open-mmlab/mmdetection/tree/v3.0.0rc1/configs/rtmdet
-    """
-
-    def __init__(self, channels: int) -> None:
-        """
-        Initialize Channel-attention module.
-
-        Args:
-            channels (int): Number of input channels.
-        """
+    def __init__(self):
         super().__init__()
         self.pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Conv2d(channels, channels, 1, 1, 0, bias=True)
+        self.fc = None  # khởi tạo sau, khi biết số channel thật
         self.act = nn.Sigmoid()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Apply channel attention to input tensor.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            (torch.Tensor): Channel-attended output tensor.
-        """
+        if self.fc is None:
+            c = x.shape[1]
+            self.fc = nn.Conv2d(c, c, 1, 1, 0, bias=True).to(x.device)
         return x * self.act(self.fc(self.pool(x)))
 
-
 class SpatialAttention(nn.Module):
-    """
-    Spatial-attention module for feature recalibration.
-
-    Applies attention weights to spatial dimensions based on channel statistics.
-
-    Attributes:
-        cv1 (nn.Conv2d): Convolution layer for spatial attention.
-        act (nn.Sigmoid): Sigmoid activation for attention weights.
-    """
-
     def __init__(self, kernel_size=7):
-        """
-        Initialize Spatial-attention module.
-
-        Args:
-            kernel_size (int): Size of the convolutional kernel (3 or 7).
-        """
         super().__init__()
         assert kernel_size in {3, 7}, "kernel size must be 3 or 7"
         padding = 3 if kernel_size == 7 else 1
         self.cv1 = nn.Conv2d(2, 1, kernel_size, padding=padding, bias=False)
         self.act = nn.Sigmoid()
 
-    def forward(self, x):
-        """
-        Apply spatial attention to input tensor.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            (torch.Tensor): Spatial-attended output tensor.
-        """
-        return x * self.act(self.cv1(torch.cat([torch.mean(x, 1, keepdim=True), torch.max(x, 1, keepdim=True)[0]], 1)))
-
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * self.act(self.cv1(torch.cat([
+            torch.mean(x, dim=1, keepdim=True),
+            torch.max(x, dim=1, keepdim=True)[0]
+        ], dim=1)))
 
 class CBAM(nn.Module):
-    """
-    Convolutional Block Attention Module.
-
-    Combines channel and spatial attention mechanisms for comprehensive feature refinement.
-
-    Attributes:
-        channel_attention (ChannelAttention): Channel attention module.
-        spatial_attention (SpatialAttention): Spatial attention module.
-    """
-
-    def __init__(self, c1, kernel_size=7):
-        """
-        Initialize CBAM with given parameters.
-
-        Args:
-            c1 (int): Number of input channels.
-            kernel_size (int): Size of the convolutional kernel for spatial attention.
-        """
+    def __init__(self, c1=None, kernel_size=7):  # c1 có thể không dùng nữa
         super().__init__()
-        self.channel_attention = ChannelAttention(c1)
+        self.channel_attention = ChannelAttention()
         self.spatial_attention = SpatialAttention(kernel_size)
 
-    def forward(self, x):
-        """
-        Apply channel and spatial attention sequentially to input tensor.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            (torch.Tensor): Attended output tensor.
-        """
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.spatial_attention(self.channel_attention(x))
 
 
